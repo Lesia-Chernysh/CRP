@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Tuple
 from tqdm import tqdm
 
+
 class Statistics:
 
     def __init__(self, mode="relevance", max_target="sum", abs_norm=False, path=None):
@@ -33,19 +34,19 @@ class Statistics:
         # TODO: activation in save path instead of relevance!
 
     def analyze_layer(self, d_c_sorted, rel_c_sorted, rf_c_sorted, t_c_sorted, layer_name):
-        
+
         t_unique = torch.unique(t_c_sorted)
 
         for t in t_unique:
-
-            # gather d_c, rel_c and rf_c for each target separately 
+            # gather d_c, rel_c and rf_c for each target separately
             t_indices = t_c_sorted.t() == t
-            
+
             # - each column of t_c_sorted contains the same number of same value targets
             # - C-style arrays start indexing row-wise
             # - we transpose, so that reshaping the flattened array, that results of [t_indices] operation,
             #   maintains the order of elements
             n_concepts = t_c_sorted.shape[1]
+            # print("statistics, n_concepts:", n_concepts)
 
             d_c_t = d_c_sorted.t()[t_indices].view(n_concepts, -1).t()
             rel_c_t = rel_c_sorted.t()[t_indices].view(n_concepts, -1).t()
@@ -100,7 +101,7 @@ class Statistics:
 
                 p_path = self.PATH / Path(layer_name)
                 p_path.mkdir(parents=True, exist_ok=True)
-               
+
                 np.save(p_path / Path(filename + "data.npy"), self.d_c_sorted[target][layer_name].cpu().numpy())
                 np.save(p_path / Path(filename + "rf.npy"), self.rf_c_sorted[target][layer_name].cpu().numpy())
                 np.save(p_path / Path(filename + "rel.npy"), self.rel_c_sorted[target][layer_name].cpu().numpy())
@@ -109,8 +110,8 @@ class Statistics:
 
         if d_index is None:
             # if final collection, then save targets
-            np.save(self.PATH  / Path("targets.npy"), np.array(list(self.d_c_sorted.keys())))
-        
+            np.save(self.PATH / Path("targets.npy"), np.array(list(self.d_c_sorted.keys())))
+
         self.delete_result_arrays()
 
         return saved_files
@@ -122,8 +123,7 @@ class Statistics:
         pbar = tqdm(total=len(path_list), dynamic_ncols=True)
 
         for path in path_list:
-
-            l_name, filename = path.replace("\\","/").split("/")[-2:]
+            l_name, filename = path.split("/")[-2:]
             target = filename.split("_")[0]
 
             d_c_sorted = np.load(path + "data.npy")

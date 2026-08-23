@@ -41,9 +41,15 @@ class Maximization:
         # TODO: for statistics in other class: make dummy variable for extra datset instead of SDS
 
     def analyze_layer(self, rel, concept: Concept, layer_name: str, data_indices, targets):
+        #print(f"---Maximim, analyze layer {layer_name}---")
 
         b_c_sorted, rel_c_sorted, rf_c_sorted = concept.reference_sampling(
             rel, layer_name, self.max_target, self.abs_norm)
+
+        #print("Max analyze layer, b_c_sorted shape", b_c_sorted.shape)
+        #print("rel_c_sorted shape", rel_c_sorted.shape)
+        #print("rf_c_sorted shape", rf_c_sorted.shape)
+
         # convert batch index to dataset wide index
         data_indices = torch.from_numpy(data_indices).to(b_c_sorted)
         d_c_sorted = torch.take(data_indices, b_c_sorted)
@@ -111,7 +117,7 @@ class Maximization:
         pbar = tqdm(total=len(path_list), dynamic_ncols=True)
 
         for path in path_list:
-            filename = path.replace("\\","/").split("/")[-1]
+            filename = path.split("/")[-1]
             l_name = re.split(r"_[0-9]+_[0-9]+_\b", filename)[0]
 
             d_c_sorted = np.load(path + "data.npy")
