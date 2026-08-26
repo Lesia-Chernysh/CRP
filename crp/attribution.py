@@ -311,28 +311,57 @@ class CondAttribution:
         """
         print(f"record layer: {record_layer}")
 
-        # ViLT / HuggingFace BatchFeature
-        if isinstance(inputs, dict):
-            print("inputs is a dict")
-            batch = inputs
-    
-            pixel_values = batch["pixel_values"]
-    
-            # This is the input on which we want relevance / gradients
-            pixel_values.requires_grad_(True)
-    
-            additional_forward_kwargs = {
-                "input_ids": batch["input_ids"],
-                "attention_mask": batch["attention_mask"],
-                "token_type_ids": batch["token_type_ids"],
-                "pixel_mask": batch["pixel_mask"],
-            }
-    
-            inputs = pixel_values
+        from transformers.feature_extraction_utils import BatchFeature
 
-        if not isinstance(inputs, tuple):
+        # Handle either:
+        #   BatchFeature(...)
+        # or:
+        #   (BatchFeature(...),)
+        if isinstance(inputs, BatchFeature):
+            batch = inputs
+
+        elif (
+            isinstance(inputs, tuple)
+            and len(inputs) == 1
+            and isinstance(inputs[0], BatchFeature)
+        ):
+            batch = inputs[0]
+
+        else:
+            batch = None
+
+
+        if batch is not None:
+            pixel_values = batch["pixel_values"]
+
+            # We attribute with respect to the image
+            pixel_values.requires_grad_(True)
+
+            additional_forward_kwargs = {
+                key: value
+                for key, value in batch.items()
+                if key not in ("pixel_values", "input_ids")
+            }
+
+            # IMPORTANT: tuple of Tensor, not tuple of BatchFeature
+            inputs = (pixel_values,)
+
+
+        # Normal CRP case
+        elif not isinstance(inputs, tuple):
             inputs = (inputs,)
-        inputs, conditions, additional_forward_kwargs = self.broadcast(inputs, conditions, additional_forward_kwargs)
+
+
+        print("BEFORE BROADCAST")
+        print("inputs type:", type(inputs))
+        print("inputs[0] type:", type(inputs[0]))
+        print("inputs[0] shape:", inputs[0].shape)
+
+        inputs, conditions, additional_forward_kwargs = self.broadcast(
+            inputs,
+            conditions,
+            additional_forward_kwargs
+        )
 
         self._check_arguments(inputs, conditions, start_layer, exclude_parallel, init_rel)
 
