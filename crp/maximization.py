@@ -40,18 +40,24 @@ class Maximization:
         # TODO: activation in save path instead of relevance!
         # TODO: for statistics in other class: make dummy variable for extra datset instead of SDS
 
-    def analyze_layer(self, rel, concept: Concept, layer_name: str, data_indices, targets):
-        #print(f"---Maximim, analyze layer {layer_name}---")
+    def analyze_layer(self, rel, concept: Concept, layer_name: str, data_indices, targets, additional_forward_kwargs):
 
         b_c_sorted, rel_c_sorted, rf_c_sorted = concept.reference_sampling(
-            rel, layer_name, self.max_target, self.abs_norm)
-
-        #print("Max analyze layer, b_c_sorted shape", b_c_sorted.shape)
-        #print("rel_c_sorted shape", rel_c_sorted.shape)
-        #print("rf_c_sorted shape", rf_c_sorted.shape)
-
+            rel, layer_name, self.max_target, self.abs_norm, additional_forward_kwargs)
         # convert batch index to dataset wide index
         data_indices = torch.from_numpy(data_indices).to(b_c_sorted)
+
+        print("b_c_sorted:", b_c_sorted)
+        print("b_c_sorted shape:", b_c_sorted.shape)
+        print("b_c_sorted dtype:", b_c_sorted.dtype)
+        print("b_c_sorted min/max:",
+              b_c_sorted.min().item(),
+              b_c_sorted.max().item())
+
+        print("data_indices shape:", data_indices.shape)
+        print("targets len:", len(targets))
+        print("targets:", targets) 
+
         d_c_sorted = torch.take(data_indices, b_c_sorted)
         # sort targets
         targets = torch.Tensor(targets).to(b_c_sorted)
@@ -117,7 +123,7 @@ class Maximization:
         pbar = tqdm(total=len(path_list), dynamic_ncols=True)
 
         for path in path_list:
-            filename = path.split("/")[-1]
+            filename = path.replace("\\","/").split("/")[-1]
             l_name = re.split(r"_[0-9]+_[0-9]+_\b", filename)[0]
 
             d_c_sorted = np.load(path + "data.npy")
