@@ -1,7 +1,7 @@
 from zennit.composites import NameMapComposite
 from zennit.core import Composite
 from crp.hooks import MaskHook
-from crp.concepts import Concept, TransformerChannelConcept
+from crp.concepts import Concept, ChannelConcept, TransformerChannelConcept
 from crp.graph import ModelGraph
 from typing import Callable, List, Dict, Union, Tuple
 import torch
@@ -17,7 +17,7 @@ attrGraphResult = namedtuple("AttributionGraphResults", "nodes, connections")
 
 class CondAttribution:
 
-    def __init__(self, model: torch.nn.Module, device: torch.device = None, overwrite_input_grad=True, no_param_grad=True, seed: int = 0) -> None:
+    def __init__(self, concept: ChannelConcept | TransformerChannelConcept, model: torch.nn.Module, device: torch.device = None, overwrite_data_grad=True, no_param_grad=True) -> None:
         """
         This class contains the functionality to compute conditional attributions.
 
@@ -26,35 +26,42 @@ class CondAttribution:
         model: torch.nn.Module
         device: torch.device
             specifies where the model and subsequent computation takes place.
-        overwrite_input_grad: boolean
-            If True, the .grad attribute of the 'inputs' argument is set to None before each __call__.
+        overwrite_data_grad: boolean
+            If True, the .grad attribute of the 'data' argument is set to None before each __call__.
         no_param_grad: boolean
             If True, sets the requires_grad attribute of all model parameters to zero, to reduce the GPU memory footprint.
         """
+        #print("initated attribution")
 
         self.MODEL_OUTPUT_NAME = "y"
 
+        self.concept = concept
         self.device = next(model.parameters()).device if device is None else device
         self.model = model
-        self.overwrite_input_grad = overwrite_input_grad
-        self.seed = seed
+        self.overwrite_data_grad = overwrite_data_grad
 
         if no_param_grad:
             self.model.requires_grad_(False)
 
 
     def backward(self, pred, grad_mask, partial_backward, layer_names, layer_out, generate=False):
-
+        #print("attribution backward")
+        #print("partial_backward", partial_backward)
         if partial_backward and len(layer_names) > 0:
 
             wrt_tensor, grad_tensors = pred, grad_mask.to(pred)
 
             for l_name in layer_names:
-                
+
                 inputs = layer_out[l_name]
 
                 try:
                     grad = torch.autograd.grad(wrt_tensor, inputs=inputs, grad_outputs=grad_tensors, retain_graph=True)
+
+                    #print("grad type:", type(grad))
+                    #print("grad len:", len(grad))
+                    #print("grad[0] shape:", grad[0].shape)
+                    #print("grad[0] nan:", torch.isnan(grad[0]).any().item())
                 except RuntimeError as e:
                     if "allow_unused=True" not in str(e):
                         raise e
@@ -76,8 +83,24 @@ class CondAttribution:
             torch.autograd.backward(wrt_tensor, grad_tensors, retain_graph=generate)
 
         else:
+            #print("pred:")
+            #print("  shape:", pred.shape)
+            #print("  nan:", torch.isnan(pred).any().item())
+            #print("  inf:", torch.isinf(pred).any().item())
+            #print("  min:", pred.min().item())
+            #print("  max:", pred.max().item())
+            #print("grad_mask:")
+            #print("  shape:", grad_mask.shape)
+            #print("  nan:", torch.isnan(grad_mask).any().item())
+            #print("  inf:", torch.isinf(grad_mask).any().item())
+            #print("  min:", grad_mask.min().item())
+            #print("  max:", grad_mask.max().item())
 
-            torch.autograd.backward(pred, grad_mask.to(pred), retain_graph=generate)
+            torch.autograd.backward(pred,
+                                    grad_mask.to(pred),
+                                    retain_graph=generate
+
+            )
 
     def relevance_init(self, prediction, target_list, init_rel):
         """
@@ -95,6 +118,7 @@ class CondAttribution:
                 used to initialize relevance instead of prediction. If None, target_list is used.
                 Please make sure to choose the right shape.
         """
+        #print("attrib, relevance init")
 
         if callable(init_rel):
             output_selection = init_rel(prediction)
@@ -113,44 +137,42 @@ class CondAttribution:
 
         return output_selection
 
-    def heatmap_modifier(self, inputs, on_device=None):
-        #print(f"inputs: {inputs}")
-        heatmap = tuple(i.grad.detach() if i.grad is not None else torch.zeros_like(i) for i in inputs)
-        #print(f"heatmap: {heatmap}")
-        heatmap = tuple(h.to(on_device) if on_device else h for h in heatmap)
-        return heatmap
+    def heatmap_modifier(self, data, on_device=None):
+        #print("attrib, heatmap modifier")
+        heatmap = data.grad.detach()
+        heatmap = heatmap.to(on_device) if on_device else heatmap
 
-    def broadcast(self, inputs, conditions, additional_forward_kwargs) -> Tuple[torch.Tensor, Dict]:
+        #print("heatmap size", heatmap.shape)
+        #print("heatmap size after sum", torch.sum(heatmap, dim=1).shape)
 
-        len_inputs, len_cond = len(inputs[0]), len(conditions)
-        assert all(len(i) == len_inputs for i in inputs)
+        return torch.sum(heatmap, dim=1)
 
-        if len_inputs == len_cond:
-            for i in inputs:
-                i.retain_grad()
-            return inputs, conditions, additional_forward_kwargs
-        
+    def broadcast(self, data, conditions) -> Tuple[torch.Tensor, Dict]:
+        #print("attrib, broadcast")
+        len_data, len_cond = len(data), len(conditions)
+
+        if len_data == len_cond:
+            data.retain_grad()
+            return data, conditions
+
         if len_cond > 1:
-            inputs = tuple(torch.repeat_interleave(i, len_cond, dim=0) for i in inputs)
-            additional_forward_kwargs = {key:torch.repeat_interleave(val, len_cond, dim=0) for key, val in additional_forward_kwargs}
-        if len_inputs > 1:
-            conditions = conditions * len_inputs
-            
-        for i in inputs:
-            i.retain_grad()
-        return inputs, conditions, additional_forward_kwargs
+            data = torch.repeat_interleave(data, len_cond, dim=0)
+        if len_data > 1:
+            conditions = conditions * len_data
 
-    def _check_arguments(self, inputs, conditions, start_layer, exclude_parallel, init_rel):
+        data.retain_grad()
+        return data, conditions
 
-        if not all(i.requires_grad for i in inputs):
+    def _check_arguments(self, data, conditions, start_layer, exclude_parallel, init_rel):
+
+        if not data.requires_grad:
             raise ValueError(
-                "requires_grad attribute of 'inputs' must be True.")
+                "requires_grad attribute of 'data' must be True.")
 
-        if self.overwrite_input_grad:
-            for i in inputs:
-                i.grad = None
-        elif any(i.grad is not None for i in inputs):
-            warnings.warn("'inputs' already has a filled .grad attribute. Set to None if not intended or set 'overwrite_grad' to True.")
+        if self.overwrite_data_grad:
+            data.grad = None
+        elif data.grad is not None:
+            warnings.warn("'data' already has a filled .grad attribute. Set to None if not intended or set 'overwrite_grad' to True.")
 
         distinct_cond = set()
         for cond in conditions:
@@ -172,12 +194,15 @@ class CondAttribution:
                                      " same layer names. (This limitation does not apply to the __call__ method)")
 
 
-    def _register_mask_fn(self, hook, mask_map, b_index, c_indices, l_name, additional_forward_kwargs, rf):
+    def _register_mask_fn(self, hook, mask_map, b_index, c_indices, l_name):
+        #print("_register_mask_fn")
 
         if callable(mask_map):
-            mask_fn = mask_map(b_index, c_indices, l_name, additional_forward_kwargs, rf)
+            mask_fn = mask_map(b_index, c_indices, l_name)
+            #print("b_index, c_indices, l_name", b_index, c_indices, l_name)
         elif isinstance(mask_map, Dict):
-            mask_fn = mask_map[l_name](b_index, c_indices, l_name, additional_forward_kwargs, rf)
+            mask_fn = mask_map[l_name](b_index, c_indices, l_name)
+            #print("b_index, c_indices, l_name", b_index, c_indices, l_name)
         else:
             raise ValueError("<mask_map> must be a dictionary or callable function.")
 
@@ -185,10 +210,10 @@ class CondAttribution:
 
 
     def __call__(
-            self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
+            self, data: torch.tensor, conditions: List[Dict[str, List]],
             composite: Composite = None, record_layer: List[str] = [],
-            mask_map: Union[Callable, Dict[str, Callable]] = TransformerChannelConcept.mask, start_layer: str = None, init_rel=None,
-            on_device: str = None, exclude_parallel=True, additional_forward_kwargs: Dict[str, torch.Tensor] = {}, rf=False) -> attrResult:
+            mask_map: Union[Callable, Dict[str, Callable]] = None, start_layer: str = None, init_rel=None,
+            on_device: str = None, exclude_parallel=True) -> attrResult:
 
         """
         Computes conditional attributions by masking the gradient flow of PyTorch (that is replaced by zennit with relevance values).
@@ -202,8 +227,8 @@ class CondAttribution:
         Parameters:
         -----------
 
-        inputs: torch.Tensor or tuple of torch.Tensor
-            Input samples for which a conditional heatmap is computed
+        data: torch.Tensor
+            Input sample for which a conditional heatmap is computed
         conditions: list of dict
             The key of a dict are string layer names and their value is a list of integers describing the concept (channel, neuron) index.
             In general, the values are passed to the 'mask_map' function as 'concept_ids' argument.
@@ -226,8 +251,6 @@ class CondAttribution:
         exclude_parallel: boolean
             If set, the PyTorch gradient flow is restricted so that it does not enter into parallel layers (shortcut connections) 
             of the layers mentioned in the 'conditions' dictionary. Useful to get the sole contribution of a specific concept.
-        additional_forward_kwargs: dict of torch.Tensor
-            Additional keyword inputs to be passed to the model without computing relevance on them.
 
         Returns:
         --------
@@ -235,7 +258,7 @@ class CondAttribution:
         attrResult: namedtuple object
             Contains the attributes 'heatmap', 'activations', 'relevances' and 'prediction'.
             'heatmap': torch.Tensor
-                Output of the self.attribution_modifier method that defines how 'inputs'.grad is processed.
+                Output of the self.attribution_modifier method that defines how 'data'.grad is processed.
             'activations': dict of str and torch.Tensor
                 The keys are the layer names and values are the activations
             'relevances': dict of str and torch.Tensor
@@ -243,18 +266,25 @@ class CondAttribution:
             'prediction': torch.Tensor
                 The model prediction output. If 'start_layer' is set, 'prediction' is the layer activation.       
         """
+        #print("attrib, __call__")
+
+        # Use the mask belonging to the concept by default.
+        if mask_map is None:
+            mask_map = self.concept.mask
+
         if exclude_parallel:
-            return self._conditions_wrapper(inputs, conditions, composite, record_layer, mask_map, start_layer, init_rel, on_device, True, additional_forward_kwargs, rf)
+            return self._conditions_wrapper(data, conditions, composite, record_layer, mask_map, start_layer, init_rel, on_device, True)
         else:
-            return self._attribute(inputs, conditions, composite, record_layer, mask_map, start_layer, init_rel, on_device, False, additional_forward_kwargs, rf)
+            return self._attribute(data, conditions, composite, record_layer, mask_map, start_layer, init_rel, on_device, False)
 
     def _conditions_wrapper(self, *args):
         """
         Since 'exclude_parallel'=True requires that the condition set contains only the same layer names,
         the list is divided into distinct lists that all contain the same layer name.
         """
+        #print("attrib, _conditions_wrapper")
 
-        inputs, conditions = args[:2]
+        data, conditions = args[:2]
 
         relevances, activations = {}, {}
         heatmap, prediction = None, None
@@ -263,7 +293,7 @@ class CondAttribution:
 
         for dist_layer in dist_conds:
 
-            attr = self._attribute(inputs, dist_conds[dist_layer], *args[2:])
+            attr = self._attribute(data, dist_conds[dist_layer], *args[2:])
 
             for l_name in attr.relevances:
                 if l_name not in relevances:
@@ -277,9 +307,9 @@ class CondAttribution:
                 heatmap = attr.heatmap
                 prediction = attr.prediction
             else:
-                heatmap = tuple(torch.cat([h1, h2], dim=0) for h1, h2 in zip(heatmap, attr.heatmap))
+                heatmap = torch.cat([heatmap, attr.heatmap], dim=0)
                 prediction = torch.cat([prediction, attr.prediction], dim=0)
-        print(f"heatmap: {heatmap}\n")
+
         return attrResult(heatmap, activations, relevances, prediction)
 
     def _separate_conditions(self, conditions):
@@ -300,70 +330,32 @@ class CondAttribution:
 
 
     def _attribute(
-            self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
+            self, data: torch.tensor, conditions: List[Dict[str, List]],
             composite: Composite = None, record_layer: List[str] = [],
-            mask_map: Union[Callable, Dict[str, Callable]] = TransformerChannelConcept.mask, start_layer: str = None, init_rel=None,
-            on_device: str = None, exclude_parallel=True, additional_forward_kwargs: Dict[str, torch.Tensor] = {}, rf=False) -> attrResult:
+            mask_map: Union[Callable, Dict[str, Callable]] = None, start_layer: str = None, init_rel=None,
+            on_device: str = None, exclude_parallel=True) -> attrResult:
         """
         Computes the actual attributions as described in __call__ method docstring.
         exclude_parallel: boolean
             If set, all layer names in 'conditions' must be identical. This limitation does not apply to the __call__ method.
         """
-        print(f"record layer: {record_layer}")
+        #print("attribution, _attribute")
+        if mask_map is None:
+            mask_map = self.concept.mask
 
-        from transformers.feature_extraction_utils import BatchFeature
+        data, conditions = self.broadcast(data, conditions)
 
-        # Handle either:
-        #   BatchFeature(...)
-        # or:
-        #   (BatchFeature(...),)
-        if isinstance(inputs, BatchFeature):
-            batch = inputs
+        #print(
+        #    "DATA:",
+        #    "nan:", torch.isnan(data).any().item(),
+        #    "inf:", torch.isinf(data).any().item(),
+        #    "min:", data.min().item(),
+        #    "max:", data.max().item()
+        #)
 
-        elif (
-            isinstance(inputs, tuple)
-            and len(inputs) == 1
-            and isinstance(inputs[0], BatchFeature)
-        ):
-            batch = inputs[0]
+        #print("conditions", conditions)
 
-        else:
-            batch = None
-
-
-        if batch is not None:
-            pixel_values = batch["pixel_values"]
-
-            # We attribute with respect to the image
-            pixel_values.requires_grad_(True)
-
-            additional_forward_kwargs = {
-                key: value
-                for key, value in batch.items()
-                if key not in ("pixel_values", "input_ids")
-            }
-
-            # IMPORTANT: tuple of Tensor, not tuple of BatchFeature
-            inputs = (pixel_values,)
-
-
-        # Normal CRP case
-        elif not isinstance(inputs, tuple):
-            inputs = (inputs,)
-
-
-        print("BEFORE BROADCAST")
-        print("inputs type:", type(inputs))
-        print("inputs[0] type:", type(inputs[0]))
-        print("inputs[0] shape:", inputs[0].shape)
-
-        inputs, conditions, additional_forward_kwargs = self.broadcast(
-            inputs,
-            conditions,
-            additional_forward_kwargs
-        )
-
-        self._check_arguments(inputs, conditions, start_layer, exclude_parallel, init_rel)
+        self._check_arguments(data, conditions, start_layer, exclude_parallel, init_rel)
 
         hook_map, y_targets, cond_l_names = {}, [], []
         for i, cond in enumerate(conditions):
@@ -373,7 +365,7 @@ class CondAttribution:
                 else:
                     if l_name not in hook_map:
                         hook_map[l_name] = MaskHook([])
-                    self._register_mask_fn(hook_map[l_name], mask_map, i, indices, l_name, additional_forward_kwargs, rf)
+                    self._register_mask_fn(hook_map[l_name], mask_map, i, indices, l_name)
                     if l_name not in cond_l_names:
                         cond_l_names.append(l_name)
 
@@ -384,14 +376,102 @@ class CondAttribution:
 
         if composite is None:
             composite = Composite()
-        with mask_composite.context(self.model), composite.context(self.model) as modified:
 
-            torch.manual_seed(self.seed)
-            np.random.seed(self.seed)
-            
+        torch.autograd.set_detect_anomaly(True)
+        data.grad = None
+
+        # apply conditional masking to earlier received outputs for each layer
+        with mask_composite.context(self.model), composite.context(self.model) as modified:
+            #print("Inside with mask_composite.context")
             if start_layer:
-                print("start layer")
-                _ = modified(*inputs, **additional_forward_kwargs)
+                _ = modified(data)
+                pred = layer_out[start_layer]
+
+                #print("START LAYER")
+                #print("pred:", pred.shape,
+                #      "nan:", torch.isnan(pred).any().item(),
+                #      "inf:", torch.isinf(pred).any().item(),
+                #      "min:", pred.min().item(),
+                #      "max:", pred.max().item())
+
+                grad_mask = self.relevance_init(pred.detach().clone(), None, init_rel)
+
+                #print("grad_mask:", grad_mask.shape,
+                #      "nan:", torch.isnan(grad_mask).any().item(),
+                #      "inf:", torch.isinf(grad_mask).any().item(),
+                #      "min:", grad_mask.min().item(),
+                #      "max:", grad_mask.max().item())
+
+                if start_layer in cond_l_names:
+                    cond_l_names.remove(start_layer)
+
+                self.backward(
+                    pred,
+                    grad_mask,
+                    exclude_parallel,
+                    cond_l_names,
+                    layer_out
+                )
+
+            else:
+                pred = modified(data)
+
+                #print(
+                #    "prediction:",
+                #    pred.shape,
+                #    "nan:", torch.isnan(pred).any().item(),
+                #    "inf:", torch.isinf(pred).any().item(),
+                #    "min:", pred.min().item(),
+                #    "max:", pred.max().item()
+                #)
+
+                grad_mask = self.relevance_init(
+                    pred.detach().clone(),
+                    y_targets,
+                    init_rel
+                )
+
+                #print(
+                #    "grad_mask:",
+                #    grad_mask.shape,
+                #    "nan:", torch.isnan(grad_mask).any().item(),
+                #    "inf:", torch.isinf(grad_mask).any().item(),
+                #    "min:", grad_mask.min().item(),
+                #    "max:", grad_mask.max().item()
+                #)
+
+                self.backward(
+                    pred,
+                    grad_mask,
+                    exclude_parallel,
+                    cond_l_names,
+                    layer_out
+                )
+
+            attribution = self.heatmap_modifier(data, on_device)
+
+            activations, relevances = {}, {}
+            if len(layer_out) > 0:
+                activations, relevances = self._collect_hook_activation_relevance(layer_out, on_device)
+            [h.remove() for h in handles]
+
+            #print(
+            #    "DATA GRAD BEFORE HEATMAP:",
+            #    "nan:", torch.isnan(data.grad).any().item(),
+            #    "inf:", torch.isinf(data.grad).any().item(),
+            #    "min:", data.grad.min().item(),
+            #    "max:", data.grad.max().item()
+            #)
+
+            #print("attribution all nan:",
+            #      torch.isnan(torch.as_tensor(attribution)).all().item())
+            #print("attribution, activations, relevances shape",
+            #      attribution, activations, relevances)
+
+        '''with mask_composite.context(self.model), composite.context(self.model) as modified:
+
+            if start_layer:
+                _ = modified(data)
                 pred = layer_out[start_layer]
                 grad_mask = self.relevance_init(pred.detach().clone(), None, init_rel)
                 if start_layer in cond_l_names:
@@ -399,30 +479,22 @@ class CondAttribution:
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
             else:
-                print("no start layer")
-                pred = modified(*inputs, **additional_forward_kwargs)
+                pred = modified(data)
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out)
 
-            #print(f"pred: {pred}")
-            attribution = self.heatmap_modifier(inputs, on_device)
-            activations, relevances = {}, {}
-            
-            print("len out", len(layer_out))
-            if len(layer_out) > 0:
-                activations, relevances = self._collect_hook_activation_relevance(layer_out, on_device)
-            [h.remove() for h in handles]
+            attribution = self.heatmap_modifier(data, on_device)
 
-        print(f"act: {activations}\nrel: {relevances}\npred: {pred}\n")
+'''
         return attrResult(attribution, activations, relevances, pred)
 
     def generate(
-            self, inputs: Union[torch.Tensor, Tuple[torch.Tensor]], conditions: List[Dict[str, List]],
+            self, data: torch.tensor, conditions: List[Dict[str, List]],
             composite: Composite = None, record_layer: List[str] = [],
-            mask_map: Union[Callable, Dict[str, Callable]] = TransformerChannelConcept.mask, start_layer: str = None, init_rel=None,
-            batch_size=10, on_device=None, exclude_parallel=True, verbose=True, additional_forward_kwargs: Dict[str, torch.Tensor] = {}, rf=False) -> attrResult:
+            mask_map: Union[Callable, Dict[str, Callable]] = None, start_layer: str = None, init_rel=None,
+            batch_size=10, on_device=None, exclude_parallel=True, verbose=True) -> attrResult:
         """
-        Computes several conditional attributions for single data point by broadcasting 'inputs' to length 'batch_size' and
+        Computes several conditional attributions for single data point by broadcasting 'data' to length 'batch_size' and
         iterating through the 'conditions' list with stepsize 'batch_size'. The model forward pass is performed only once and 
         the backward graph kept in memory in order to double the performance.
         Please refer to the docstring of the __call__ method.
@@ -434,10 +506,10 @@ class CondAttribution:
         verbose: boolean
             If set, a progressbar is displayed.
         """
-        
-        if not isinstance(inputs, tuple):
-            inputs = (inputs,)
-        self._check_arguments(inputs, conditions, start_layer, exclude_parallel, init_rel)
+        if mask_map is None:
+            mask_map = self.concept.mask
+
+        self._check_arguments(data, conditions, start_layer, exclude_parallel, init_rel)
 
         # register on all layers in layer_map an empty hook
         hook_map, cond_l_names = {}, []
@@ -463,26 +535,21 @@ class CondAttribution:
             batches = 1
             batch_size = cond_length
 
-        inputs_batched = tuple(torch.repeat_interleave(i, batch_size, dim=0) for i in inputs)
-        additional_forward_kwargs = {key:torch.repeat_interleave(val, len_cond, dim=0) for key, val in additional_forward_kwargs}
-        for b in inputs_batched:
-            b.grad = None
-            b.retain_grad()
+        data_batch = torch.repeat_interleave(data, batch_size, dim=0)
+        data_batch.grad = None
+        data_batch.retain_grad()
         retain_graph = True
 
         with mask_composite.context(self.model), composite.context(self.model) as modified:
 
-            torch.manual_seed(self.seed)
-            np.random.seed(self.seed)
-            
             if start_layer:
-                _ = modified(*inputs_batched, **additional_forward_kwargs)
+                _ = modified(data_batch)
                 pred = layer_out[start_layer]
                 if start_layer in cond_l_names:
                     cond_l_names.remove(start_layer)
 
             else:
-                pred = modified(*inputs_batched, **additional_forward_kwargs)
+                pred = modified(data_batch)
 
             if verbose:
                 pbar = tqdm(total=batches, dynamic_ncols=True)
@@ -500,7 +567,7 @@ class CondAttribution:
                         if l_name == self.MODEL_OUTPUT_NAME:
                             y_targets.append(indices)
                         else:
-                            self._register_mask_fn(hook_map[l_name], mask_map, i, indices, l_name, additional_forward_kwargs, rf)
+                            self._register_mask_fn(hook_map[l_name], mask_map, i, indices, l_name)
 
                 if b == batches-1:
                     # last batch may have len(y_targets) != batch_size. Padded part is ignored later.
@@ -513,15 +580,15 @@ class CondAttribution:
                 grad_mask = self.relevance_init(pred.detach().clone(), y_targets, init_rel)
                 self.backward(pred, grad_mask, exclude_parallel, cond_l_names, layer_out, retain_graph)
 
-                heatmap = self.heatmap_modifier(inputs_batched)
+                heatmap = self.heatmap_modifier(data_batch)
                 activations, relevances = {}, {}
                 if len(layer_out) > 0:
                     activations, relevances = self._collect_hook_activation_relevance(
                         layer_out, on_device, batch_size)
 
-                yield attrResult(tuple(h[:batch_size] for h in heatmap), activations, relevances, pred[:batch_size])
+                yield attrResult(heatmap[:batch_size], activations, relevances, pred[:batch_size])
 
-                self._reset_gradients(inputs_batched)
+                self._reset_gradients(data_batch)
                 [hook.fn_list.clear() for hook in hook_map.values()]
 
         [h.remove() for h in handles]
@@ -542,6 +609,7 @@ class CondAttribution:
         applies a forward hook to all layers in record_l_names, start_layer and cond_l_names to record 
         the activations and relevances
         """
+        #print("attribution, _append_recording_layer_hooks")
 
         handles = []
         layer_out = {}
@@ -553,8 +621,6 @@ class CondAttribution:
 
         if start_layer is not None and start_layer not in record_l_names:
             record_l_names.append(start_layer)
-
-        print(f"record_l_names: {record_l_names}")
 
         for name, layer in self.model.named_modules():
 
@@ -608,7 +674,7 @@ class CondAttribution:
 
         return activations, relevances
 
-    def _reset_gradients(self, inputs):
+    def _reset_gradients(self, data):
         """
         custom zero_grad() function
         """
@@ -616,8 +682,7 @@ class CondAttribution:
         for p in self.model.parameters():
             p.grad = None
 
-        for i in inputs:
-            i.grad = None
+        data.grad = None
 
 
 class AttributionGraph:
