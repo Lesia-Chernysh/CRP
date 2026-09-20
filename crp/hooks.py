@@ -14,6 +14,7 @@ class MaskHook:
 
     def post_forward(self, module, input, output):
         '''Register a backward-hook to the resulting tensor right after the forward.'''
+        #print("MaskHook, post_forward")
         hook_ref = weakref.ref(self)
 
         @functools.wraps(self.backward)
@@ -29,8 +30,11 @@ class MaskHook:
         return output[0] if len(output) == 1 else output
 
     def backward(self, module, grad):
+        #print("MaskHook, backward")
         '''Hook applied during backward-pass'''
         for mask_fn in self.fn_list:
+            #print("mask_fn: ", mask_fn)
+            #print("grad", grad.shape)
             grad = mask_fn(grad)
 
         return grad
@@ -72,13 +76,11 @@ class FeatVisHook:
     def post_forward(self, module, input, output):
         '''Register a backward-hook to the resulting tensor right after the forward.'''
 
-        s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
-        
-        if isinstance(output, tuple):
-          output = output[0]
-
+        #print("FeatVisHook, post_forward")
+        s_indices, targets = self.dict_inputs["sample_indices"], self.dict_inputs["targets"]
         activation = output.detach().to(self.on_device) if self.on_device else output.detach()
-        self.FV.analyze_activation(activation, self.layer_name, self.concept, s_indices, targets, additional_forward_kwargs)
+        self.FV.analyze_activation(activation, self.layer_name, self.concept, s_indices, targets)
+
 
         hook_ref = weakref.ref(self)
 
@@ -95,11 +97,13 @@ class FeatVisHook:
         return output[0] if len(output) == 1 else output
 
     def backward(self, module, grad):
+        #print("backward FeatVisHook")
         '''Hook applied during backward-pass'''
 
-        s_indices, targets, additional_forward_kwargs = self.dict_inputs["sample_indices"], self.dict_inputs["targets"], self.dict_inputs["additional_forward_kwargs"]
+        s_indices, targets = self.dict_inputs["sample_indices"], self.dict_inputs["targets"]
         relevance = grad.detach().to(self.on_device) if self.on_device else grad.detach()
-        self.FV.analyze_relevance(relevance, self.layer_name, self.concept, s_indices, targets, additional_forward_kwargs)
+        #print("relevance shape in hook: ", relevance.shape)
+        self.FV.analyze_relevance(relevance, self.layer_name, self.concept, s_indices, targets)
 
         return grad
 
