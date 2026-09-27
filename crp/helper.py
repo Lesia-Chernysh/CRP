@@ -91,7 +91,7 @@ def load_maximization(path_folder, layer_name):
 
 def load_stat_targets(path_folder):
 
-    targets = np.load(Path(path_folder) / Path("targets.npy")).astype(np.int)
+    targets = np.load(Path(path_folder) / Path("targets.npy")).astype(np.int32)
 
     return targets
 
