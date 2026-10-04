@@ -12,20 +12,6 @@ resnet50_composite = EpsilonPlusFlat(
     canonizers=[PUREResNetCanonizer()],
 )
 
-class EpsilonPlusFlat(SpecialFirstLayerMapComposite):
-    '''An explicit composite using the flat rule for any linear first layer, the zplus rule for all other convolutional
-    layers and the epsilon rule for all other fully connected layers.
-    '''
-    def __init__(self, canonizers=None):
-        layer_map = layer_map_base + [
-            (Convolution, ZPlus()),
-            (torch.nn.Linear, Epsilon()),
-        ]
-        first_map = [
-            (Linear, Flat())
-        ]
-        super().__init__(layer_map, first_map, canonizers=canonizers)
-
 class ReferenceEpsilonPlusFlat(EpsilonPlusFlat):
     """
     For ResNet-50
