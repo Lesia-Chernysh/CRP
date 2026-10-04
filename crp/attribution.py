@@ -118,7 +118,7 @@ class CondAttribution:
                 used to initialize relevance instead of prediction. If None, target_list is used.
                 Please make sure to choose the right shape.
         """
-        #print("attrib, relevance init")
+        print(f"target_list: {target_list}")
 
         if callable(init_rel):
             output_selection = init_rel(prediction)
@@ -161,7 +161,8 @@ class CondAttribution:
             conditions = conditions * len_data
 
         data.retain_grad()
-        return data, conditions
+        # TODO: return None instead of conditions, since the dataset doesn't have the labels yet
+        return data, None
 
     def _check_arguments(self, data, conditions, start_layer, exclude_parallel, init_rel):
 
