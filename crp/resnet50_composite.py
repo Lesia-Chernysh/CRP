@@ -4,7 +4,7 @@ from zennit.layer import Sum
 from zennit.rules import ZPlus, Epsilon, Flat, Gamma, Pass
 from zennit.types import Convolution, Linear
 from zennit.composites import EpsilonPlusFlat
-from resnet50_canonizer import PUREResNetCanonizer
+from crp.resnet50_canonizer import PUREResNetCanonizer
 
 resnet50_composite = EpsilonPlusFlat(
     epsilon=1e-6,
