@@ -592,3 +592,27 @@ class FeatureVisualization:
 
             pbar.close()
 
+
+class PredictionFeatureVisualization(
+    FeatureVisualization
+):
+    def __init__(
+        self,
+        *args,
+        predicted_targets,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+
+        self.predicted_targets = torch.as_tensor(
+            predicted_targets,
+            dtype=torch.long,
+        ).cpu()
+
+        if len(self.predicted_targets) != len(self.dataset):
+            raise ValueError(
+                "Number of predictions does not match "
+                "the dataset length: "
+                f"{len(self.predicted_targets)} versus "
+                f"{len(self.dataset)}."
+            )
