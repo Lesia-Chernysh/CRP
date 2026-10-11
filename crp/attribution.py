@@ -293,6 +293,8 @@ class CondAttribution:
 
         dist_conds = self._separate_conditions(conditions)
 
+        print(f"dist_conds: {dist_conds}")
+
         for dist_layer in dist_conds:
 
             attr = self._attribute(data, dist_conds[dist_layer], *args[2:])
