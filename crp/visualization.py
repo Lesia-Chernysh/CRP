@@ -603,6 +603,7 @@ class PredictionFeatureVisualization(
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        print("NEW")
 
         self.predicted_targets = torch.as_tensor(
             predicted_targets,
