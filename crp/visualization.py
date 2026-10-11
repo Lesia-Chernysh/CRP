@@ -616,3 +616,26 @@ class PredictionFeatureVisualization(
                 f"{len(self.predicted_targets)} versus "
                 f"{len(self.dataset)}."
             )
+
+    def get_data_concurrently(
+        self,
+        indices,
+        preprocessing=True,
+    ):
+        # Let the original implementation load images.
+        data, _ = super().get_data_concurrently(
+            indices,
+            preprocessing=preprocessing,
+        )
+
+        indices_array = np.asarray(
+            indices,
+            dtype=np.int64,
+        ).reshape(-1)
+
+        targets = (
+            self.predicted_targets[indices_array]
+            .numpy()
+        )
+
+        return data, targets
