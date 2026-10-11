@@ -147,22 +147,27 @@ class CondAttribution:
 
         return torch.sum(heatmap, dim=1)
 
-    def broadcast(self, data, conditions) -> Tuple[torch.Tensor, Dict]:
-        #print("attrib, broadcast")
-        len_data, len_cond = len(data), len(conditions)
-
+    def broadcast(self, data, conditions) -> Tuple[torch.Tensor, List[Dict]]:
+        if conditions is None or len(conditions) == 0:
+            raise ValueError("At least one attribution condition is required.")
+    
+        len_data = len(data)
+        len_cond = len(conditions)
+    
         if len_data == len_cond:
             data.retain_grad()
             return data, conditions
-
+    
         if len_cond > 1:
+            # Evaluate every condition for every input sample.
             data = torch.repeat_interleave(data, len_cond, dim=0)
+    
         if len_data > 1:
+            # One copy of the condition set for every input sample.
             conditions = conditions * len_data
-
+    
         data.retain_grad()
-        # TODO: return None instead of conditions, since the dataset doesn't have the labels yet
-        return data, None
+        return data, conditions
 
     def _check_arguments(self, data, conditions, start_layer, exclude_parallel, init_rel):
 
