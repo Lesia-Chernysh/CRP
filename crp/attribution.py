@@ -286,6 +286,7 @@ class CondAttribution:
         #print("attrib, _conditions_wrapper")
 
         data, conditions = args[:2]
+        print(f"conditions: {conditions}")
 
         relevances, activations = {}, {}
         heatmap, prediction = None, None
