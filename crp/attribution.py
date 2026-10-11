@@ -357,7 +357,7 @@ class CondAttribution:
         #    "max:", data.max().item()
         #)
 
-        #print("conditions", conditions)
+        print("conditions", conditions)
 
         self._check_arguments(data, conditions, start_layer, exclude_parallel, init_rel)
 
