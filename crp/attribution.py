@@ -291,14 +291,11 @@ class CondAttribution:
         #print("attrib, _conditions_wrapper")
 
         data, conditions = args[:2]
-        print(f"conditions: {conditions}")
 
         relevances, activations = {}, {}
         heatmap, prediction = None, None
 
         dist_conds = self._separate_conditions(conditions)
-
-        print(f"dist_conds: {dist_conds}")
 
         for dist_layer in dist_conds:
 
@@ -361,8 +358,6 @@ class CondAttribution:
         #    "min:", data.min().item(),
         #    "max:", data.max().item()
         #)
-
-        print("conditions", conditions)
 
         self._check_arguments(data, conditions, start_layer, exclude_parallel, init_rel)
 
